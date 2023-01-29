@@ -191,14 +191,29 @@ bool registerSensor()
 }
 
 
+// Called after each gallon used.
 bool sendInstant()
 {
   char path[255];
   char msg[16];
 
   //Send current flow rate in GPM
+  static unsigned long lastMs = millis();
+  static unsigned lastTotal = 0;
+  unsigned long curMs = millis();
+
+  if (curMs - lastMs > 0)
+    sprintf(msg, "%0.2f", ((float)(dailyTotal - lastTotal) * 60000.0) / (float)(curMs - lastMs));
+  else
+    sprintf(msg, "0");
+
+  lastTotal = dailyTotal;
+  lastMs = curMs;
+
   sprintf(path, "homeassistant/sensor/%s", realtime_flow_id);
+  
   mqttClient.publish(path, (const unsigned char*)msg, strlen(msg), true);
+
 
   //Send current daily total gallons
   sprintf(path, "homeassistant/sensor/%s", today_total_id);
