@@ -74,7 +74,7 @@ void setupTime()
   else {
     Serial.printf("Date Now is %s\n", DateTime.toISOString().c_str());
     DateTimeParts p = DateTime.getParts();  
-    Serial.printf("%02d\n",p.getMonthDay());
+    Serial.printf("Day: %02d\n",p.getMonthDay());
   }
 }
 
@@ -169,22 +169,40 @@ bool registerSensor()
     
 //    WiFi.macAddress(mac);
 //    sprintf(uniqId, "%02x%02x%02x%02x%02x%02x%02d",mac[5],mac[4],mac[3],mac[2],mac[1],mac[0],0);       
+
+// Changing retained to false. CAC 8/14/2024
     
     sprintf(path, "homeassistant/sensor/%s/config", realtime_flow_id);    
     msgLen = sprintf(message, "{\"name\": \"506 Water Current Flow\", \"uniq_id\":\"%s\", \"state_topic\":\"homeassistant/sensor/%s\", \"unit_of_meas\":\"gpm\"}",realtime_flow_id,realtime_flow_id);
-    mqttClient.publish(path, (const unsigned char *)message, msgLen, true);
+    if (!mqttClient.publish(path, (const unsigned char *)message, msgLen, false))
+    {
+      Serial.println("Failed to publish realtiem flow.");
+      return false;
+    }
     
     sprintf(path, "homeassistant/sensor/%s/config", today_total_id);    
     msgLen = sprintf(message, "{\"name\": \"506 Water Total Today\", \"uniq_id\":\"%s\", \"state_topic\":\"homeassistant/sensor/%s\", \"unit_of_meas\":\"Gal\"}",today_total_id, today_total_id);
-    mqttClient.publish(path, (const unsigned char *)message, msgLen, true);
+    if (!mqttClient.publish(path, (const unsigned char *)message, msgLen, false))
+    {
+      Serial.println("Failed to publish today total.");
+      return false;
+    }
 
     sprintf(path, "homeassistant/sensor/%s/config", last_hour_total_id);    
     msgLen = sprintf(message, "{\"name\": \"506 Water Last Hour\", \"uniq_id\":\"%s\", \"state_topic\":\"homeassistant/sensor/%s\"}",last_hour_total_id,last_hour_total_id);
-    mqttClient.publish(path, (const unsigned char *)message, msgLen, true);
+    if (!mqttClient.publish(path, (const unsigned char *)message, msgLen, false))
+    {
+      Serial.println("Failed to publish last hour total.");
+      return false;
+    }
 
     sprintf(path, "homeassistant/sensor/%s/config", yesterday_total_id);    
     msgLen = sprintf(message, "{\"name\": \"506 Water Total Yesterday\", \"uniq_id\":\"%s\", \"state_topic\":\"homeassistant/sensor/%s\"}",yesterday_total_id, yesterday_total_id);
-    mqttClient.publish(path, (const unsigned char *)message, msgLen, true);
+    if (!mqttClient.publish(path, (const unsigned char *)message, msgLen, false))
+    {
+      Serial.println("Failed to publish yesterday total.");
+      return false;
+    }
     
     Serial.println("Sensor Registered.");
     return true;
@@ -195,7 +213,7 @@ bool registerSensor()
 bool sendInstant()
 {
   char path[255];
-  char msg[16];
+  char msg[24];
 
   //Send current flow rate in GPM
   static unsigned long lastMs = millis();
@@ -212,12 +230,21 @@ bool sendInstant()
 
   sprintf(path, "homeassistant/sensor/%s", realtime_flow_id);
   
-  mqttClient.publish(path, (const unsigned char*)msg, strlen(msg), true);
+  if (!mqttClient.publish(path, (const unsigned char*)msg, strlen(msg), true))
+  {
+    Serial.println("Failed to publish realtime flow.");
+    return false;
+  }
+  else 
+  {
+    Serial.printf("Published %s \n", msg);
+  }
 
 
   //Send current daily total gallons
   sprintf(path, "homeassistant/sensor/%s", today_total_id);
   sprintf(msg, "%d", dailyTotal);
+  Serial.printf("Sending %s %s\n", path, msg);
   return mqttClient.publish(path, (const unsigned char*)msg, strlen(msg), true);
 
 }
@@ -228,6 +255,7 @@ bool sendHour()
   
   sprintf(path, "homeassistant/sensor/%s", last_hour_total_id);
   sprintf(msg, "%d", hourlyTotal);
+  Serial.printf("Sending %s %s\n", path, msg);
   return mqttClient.publish(path, (const unsigned char*)msg, strlen(msg), true);
 }
 
@@ -241,6 +269,8 @@ bool sendYesterday()
   // Send today and day prior as yesterday. Total reset in other function.
   sprintf(path, "homeassistant/sensor/%s", yesterday_total_id);
   sprintf(msg, "%d", dailyTotal);
+  Serial.printf("Sending %s %s\n", path, msg);
+
   return mqttClient.publish(path, (const unsigned char*)msg, strlen(msg), true);
 }
 
@@ -249,7 +279,7 @@ bool sendYesterday()
 void setup() {
 
   Serial.begin(115200);
-  Serial.println("EspMQTTHomeAssistantWM.ino Dec 2021. CAC");
+  Serial.println("ESP8266_MQTT_WaterMeter CCrawford Aug 2024");
   
   WiFi.setSleepMode(WIFI_NONE_SLEEP);
   WiFi.begin(ssid, password);
@@ -260,7 +290,9 @@ void setup() {
     delay(500);
     Serial.print(". ");
   }
-  Serial.println("Connected to WiFi ");
+  Serial.print("Connected to WiFi ");
+  // Print the IP address to Serial Monitor
+  Serial.println(WiFi.localIP());
 
   setupOtaUpdate();
 
@@ -277,7 +309,10 @@ void setup() {
 
   setupTime();
   reconnectMqtt();
-  registerSensor();
+  if (!registerSensor())
+  {
+    Serial.println("***************Failed to register sensor.******************");
+  }
 
 
   Serial.println("Setting up ADC");
@@ -364,7 +399,10 @@ void loop() {
     cycleCount = 0;
     hourlyTotal++;
     dailyTotal++;
-    sendInstant();
+    if (!sendInstant())
+    {
+      Serial.println("**************Failed to send instant****************");
+    }
   }
 
   if(thisMs > lastHourlyUpdate + MS_IN_HOUR)
@@ -414,8 +452,10 @@ void loop() {
   // Use ANSI escape sequences to make the moving graph in the telnet terminal. https://en.wikipedia.org/wiki/ANSI_escape_code 
   // sprintf(buf, "\033[2J%d%s%s%d\033[0m%s%d   \033[1;34m%d %d %d\033[0m",raLow,paddingL,(cycleSet)?"\033[1;32m":"\033[1;31m",runningAverage,paddingR, raHigh, dailyTotal, curDayOfMonth, pulsesToday);
           //    esc, set position, show low, pad spaces, set color, show avg, pad spaces, show remaining stats, reset color and attributes.
-  TelnetStream.printf("\033[2JTime: %s\r\n",dateParts.format("%x %X").c_str());
-  sprintf(buf, "%d%s%s%d\033[0m%s%d   \033[1;34m%d %d %d\033[0m",raLow,paddingL,(cycleSet)?"\033[1;32m":"\033[1;31m",runningAverage,paddingR, raHigh, dailyTotal, curDayOfMonth, pulsesToday);
+  // TelnetStream.printf("\033[2JTime: %s\r\n",dateParts.format("%x %X").c_str());
+//   sprintf(buf, "\033[2J%d%s%s%d\033[0m%s%d   \033[1;34m%d %d %d\033[0m",raLow,paddingL,(cycleSet)?"\033[1;32m":"\033[1;31m",runningAverage,paddingR, raHigh, dailyTotal, curDayOfMonth, pulsesToday);
+  sprintf(buf, "\033[H\033[K%d%s%s%d\033[0m%s%d   \033[1;34m%d %d %d\033[0m", raLow, paddingL, (cycleSet) ? "\033[1;32m" : "\033[1;31m", runningAverage, paddingR, raHigh, dailyTotal, curDayOfMonth, pulsesToday);
+
   TelnetStream.println(buf);
   // TelnetStream.printf("Next Time sync in: %ld",MS_IN_DAY - (thisMs - lastTimeSync));
 
